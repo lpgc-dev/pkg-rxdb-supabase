@@ -33,7 +33,6 @@ class SupabaseReplication extends RxReplicationState {
     this.table = options.table || options.collection.name;
     this.primaryKey = options.primaryKey || options.collection.schema.primaryPath;
     this.lastModifiedFieldName = options.pull?.lastModifiedField || DEFAULT_LAST_MODIFIED_FIELD;
-    console.log("-------- PKG: THIS OBJECT", this);
     if (this.autoStart) {
       void this.start();
     }
@@ -44,17 +43,9 @@ class SupabaseReplication extends RxReplicationState {
   realtimeChanges;
   realtimeChannel;
   async start() {
-    console.log(
-      "-------- PKG: start",
-      this.live,
-      this.options.pull,
-      this.options.pull?.realtimePostgresChanges
-    );
     if (this.live && this.options.pull && (this.options.pull?.realtimePostgresChanges || typeof this.options.pull.realtimePostgresChanges === "undefined")) {
-      console.log("-------- PKG: watching postgres changes");
       this.watchPostgresChanges();
     }
-    console.log("-------- PKG: starting super.start");
     return super.start();
   }
   async cancel() {
@@ -63,17 +54,17 @@ class SupabaseReplication extends RxReplicationState {
     }
     return super.cancel();
   }
+  getCurrentCollectionColumnNames() {
+    return Object.keys(this.collection.internalStorageInstance.schema.properties).filter(
+      (name) => !name.startsWith("_")
+    );
+  }
   /**
    * Pulls all changes since the last checkpoint from supabase.
    */
   async pullHandler(lastPulledCheckpoint, batchSize) {
     try {
-      console.log("-------- PKG1: pullHandler", lastPulledCheckpoint);
-      console.log("-------- PKG1: BATCH SIZE", batchSize);
-      console.log("-------- PKG1: TABLE", this.table);
-      let query = this.options.supabaseClient.from(this.table).select();
-      console.log("-------- PKG: QUERY", query);
-      console.log("-------- PKG: QUERY 2", JSON.stringify(query));
+      let query = this.options.supabaseClient.from(this.table).select("*");
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         const lastModified = JSON.stringify(lastPulledCheckpoint.modified);
         const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue);
@@ -82,19 +73,17 @@ class SupabaseReplication extends RxReplicationState {
         query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`);
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize);
-      console.log(
-        "-------- PKG: Pulling changes since",
+      console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames());
+      console.debug(
+        "PKG-RXDB-SUPABASE : Pulling changes since",
         lastPulledCheckpoint?.modified,
         "with query",
         query["url"].toString()
       );
       const { data, error } = await query;
-      console.log("-------- PKG: DATA", data);
-      console.log("-------- PKG: ERROR", error);
       if (error)
         throw error;
       if (!data || data.length === 0) {
-        console.log("-------- PKG: No new data to pull");
         return {
           checkpoint: lastPulledCheckpoint,
           documents: []
@@ -102,15 +91,13 @@ class SupabaseReplication extends RxReplicationState {
       } else {
         const documents = data.map(this.rowToRxDoc.bind(this));
         const checkpoint = this.rowToCheckpoint(data[data.length - 1]);
-        console.log("-------- PKG: Returning documents:", documents);
-        console.log("-------- PKG: New checkpoint:", checkpoint);
         return {
           checkpoint,
           documents
         };
       }
     } catch (error) {
-      console.log("-------- PKG: pullHandler error", error);
+      console.error("PKG-RXDB-SUPABASE : pullHandler error", error);
       throw error;
     }
   }
@@ -171,7 +158,6 @@ class SupabaseReplication extends RxReplicationState {
       "postgres_changes",
       { event: "*", schema: "public", table: this.table },
       (payload) => {
-        console.log("-------- PKG: realtime event received", payload);
         if (payload.eventType === "DELETE" || !payload.new)
           return;
         this.realtimeChanges.next({
@@ -190,13 +176,20 @@ class SupabaseReplication extends RxReplicationState {
     return this.rowToRxDoc(data[0]);
   }
   rowToRxDoc(row) {
-    delete row[this.lastModifiedFieldName];
+    const _columns = this.getCurrentCollectionColumnNames();
+    if (!_columns.includes(this.lastModifiedFieldName)) {
+      throw new Error(
+        `lastModifiedField : '${this.lastModifiedFieldName}' not found in collection schema`
+      );
+    }
+    Object.keys(row).forEach((key) => {
+      if (!_columns.includes(key)) {
+        delete row[key];
+      }
+    });
     return row;
   }
   rowToCheckpoint(row) {
-    console.log("-------- PKG: lastModifiedFieldName", this.lastModifiedFieldName);
-    console.log("-------- PKG: primaryKey", this.primaryKey);
-    console.log("-------- PKG: row", row);
     return {
       modified: row[this.lastModifiedFieldName],
       primaryKeyValue: row[this.primaryKey]
