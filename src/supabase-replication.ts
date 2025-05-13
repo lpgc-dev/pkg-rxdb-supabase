@@ -132,8 +132,14 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
       options.pull && {
         ...options.pull,
         stream$: realtimeChanges,
-        handler: (lastPulledCheckpoint: SupabaseReplicationCheckpoint | undefined, batchSize: number) => 
-          this.pullHandler(lastPulledCheckpoint || { modified: "", primaryKeyValue: "" }, batchSize),
+        handler: (
+          lastPulledCheckpoint: SupabaseReplicationCheckpoint | undefined,
+          batchSize: number,
+        ) =>
+          this.pullHandler(
+            lastPulledCheckpoint || { modified: "", primaryKeyValue: "" },
+            batchSize,
+          ),
       },
       options.push && {
         ...options.push,
@@ -148,21 +154,28 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
     this.table = options.table || options.collection.name
     this.primaryKey = options.primaryKey || options.collection.schema.primaryPath
     this.lastModifiedFieldName = options.pull?.lastModifiedField || DEFAULT_LAST_MODIFIED_FIELD
-
+    console.log("-------- PKG: THIS OBJECT", this)
     if (this.autoStart) {
       void this.start()
     }
   }
-
   public override async start(): Promise<void> {
+    console.log(
+      "-------- PKG: start",
+      this.live,
+      this.options.pull,
+      this.options.pull?.realtimePostgresChanges,
+    )
     if (
       this.live &&
       this.options.pull &&
-      (this.options.pull.realtimePostgresChanges ||
+      (this.options.pull?.realtimePostgresChanges ||
         typeof this.options.pull.realtimePostgresChanges === "undefined")
     ) {
+      console.log("-------- PKG: watching postgres changes")
       this.watchPostgresChanges()
     }
+    console.log("-------- PKG: starting super.start")
     return super.start()
   }
 
@@ -180,31 +193,52 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
     lastPulledCheckpoint: SupabaseReplicationCheckpoint,
     batchSize: number,
   ): Promise<ReplicationPullHandlerResult<RxDocType, SupabaseReplicationCheckpoint>> {
-    let query = this.options.supabaseClient.from(this.table).select()
-    if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
-      // Construct the PostgREST query for the following condition:
-      // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
-      const lastModified = JSON.stringify(lastPulledCheckpoint.modified)
-      const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
-      const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`
-      const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`
-      query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
-    }
-    query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)
-    //console.debug("Pulling changes since", lastPulledCheckpoint?.modified, "with query", (query as any)['url'].toString())
-
-    const { data, error } = await query
-    if (error) throw error
-    if (data.length == 0) {
-      return {
-        checkpoint: lastPulledCheckpoint,
-        documents: [],
+    try {
+      console.log("-------- PKG1: pullHandler", lastPulledCheckpoint)
+      console.log("-------- PKG1: BATCH SIZE", batchSize)
+      console.log("-------- PKG1: TABLE", this.table)
+      let query = this.options.supabaseClient.from(this.table).select()
+      console.log("-------- PKG: QUERY", query)
+      console.log("-------- PKG: QUERY 2", JSON.stringify(query))
+      if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
+        // Construct the PostgREST query for the following condition:
+        // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
+        const lastModified = JSON.stringify(lastPulledCheckpoint.modified)
+        const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
+        const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`
+        const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`
+        query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
       }
-    } else {
-      return {
-        checkpoint: this.rowToCheckpoint(data[data.length - 1]),
-        documents: data.map(this.rowToRxDoc.bind(this)),
+      query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)
+      console.log(
+        "-------- PKG: Pulling changes since",
+        lastPulledCheckpoint?.modified,
+        "with query",
+        (query as any)["url"].toString(),
+      )
+      const { data, error } = await query
+      console.log("-------- PKG: DATA", data)
+      console.log("-------- PKG: ERROR", error)
+      if (error) throw error
+      if (!data || data.length === 0) {
+        console.log("-------- PKG: No new data to pull")
+        return {
+          checkpoint: lastPulledCheckpoint,
+          documents: [],
+        }
+      } else {
+        const documents = data.map(this.rowToRxDoc.bind(this))
+        const checkpoint = this.rowToCheckpoint(data[data.length - 1])
+        console.log("-------- PKG: Returning documents:", documents)
+        console.log("-------- PKG: New checkpoint:", checkpoint)
+        return {
+          checkpoint,
+          documents,
+        }
       }
+    } catch (error) {
+      console.log("-------- PKG: pullHandler error", error)
+      throw error
     }
   }
 
@@ -277,14 +311,19 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   private watchPostgresChanges() {
     this.realtimeChannel = this.options.supabaseClient
       .channel(`rxdb-supabase-${this.replicationIdentifier}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: this.table }, (payload: { eventType: string; new: any }) => {
-        if (payload.eventType === "DELETE" || !payload.new) return // Should have set _deleted field already
-        //console.debug('Realtime event received:', payload)
-        this.realtimeChanges.next({
-          checkpoint: this.rowToCheckpoint(payload.new),
-          documents: [this.rowToRxDoc(payload.new)],
-        })
-      })
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: this.table },
+        (payload: { eventType: string; new: any }) => {
+          console.log("-------- PKG: realtime event received", payload)
+          if (payload.eventType === "DELETE" || !payload.new) return // Should have set _deleted field already
+          //console.debug('Realtime event received:', payload)
+          this.realtimeChanges.next({
+            checkpoint: this.rowToCheckpoint(payload.new),
+            documents: [this.rowToRxDoc(payload.new)],
+          })
+        },
+      )
       .subscribe()
   }
 
@@ -306,6 +345,9 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   }
 
   private rowToCheckpoint(row: any): SupabaseReplicationCheckpoint {
+    console.log("-------- PKG: lastModifiedFieldName", this.lastModifiedFieldName)
+    console.log("-------- PKG: primaryKey", this.primaryKey)
+    console.log("-------- PKG: row", row)
     return {
       modified: row[this.lastModifiedFieldName],
       primaryKeyValue: row[this.primaryKey],
