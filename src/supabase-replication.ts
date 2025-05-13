@@ -132,12 +132,13 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
       options.pull && {
         ...options.pull,
         stream$: realtimeChanges,
-        handler: (lastCheckpoint, batchSize) => this.pullHandler(lastCheckpoint as SupabaseReplicationCheckpoint, batchSize),
+        handler: (lastPulledCheckpoint: SupabaseReplicationCheckpoint | undefined, batchSize: number) => 
+          this.pullHandler(lastPulledCheckpoint || { modified: "", primaryKeyValue: "" }, batchSize),
       },
       options.push && {
         ...options.push,
         batchSize: 1, // TODO: support batch insertion
-        handler: (rows) => this.pushHandler(rows),
+        handler: (rows: RxReplicationWriteToMasterRow<RxDocType>[]) => this.pushHandler(rows),
       },
       typeof options.live === "undefined" ? true : options.live,
       typeof options.retryTime === "undefined" ? 5000 : options.retryTime,
@@ -176,27 +177,27 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
    * Pulls all changes since the last checkpoint from supabase.
    */
   private async pullHandler(
-    lastCheckpoint: SupabaseReplicationCheckpoint,
+    lastPulledCheckpoint: SupabaseReplicationCheckpoint,
     batchSize: number,
   ): Promise<ReplicationPullHandlerResult<RxDocType, SupabaseReplicationCheckpoint>> {
     let query = this.options.supabaseClient.from(this.table).select()
-    if (lastCheckpoint && lastCheckpoint.modified) {
+    if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
       // Construct the PostgREST query for the following condition:
       // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
-      const lastModified = JSON.stringify(lastCheckpoint.modified)
-      const lastPrimaryKey = JSON.stringify(lastCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
+      const lastModified = JSON.stringify(lastPulledCheckpoint.modified)
+      const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
       const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`
       const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`
       query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
     }
     query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)
-    //console.debug("Pulling changes since", lastCheckpoint?.modified, "with query", (query as any)['url'].toString())
+    //console.debug("Pulling changes since", lastPulledCheckpoint?.modified, "with query", (query as any)['url'].toString())
 
     const { data, error } = await query
     if (error) throw error
     if (data.length == 0) {
       return {
-        checkpoint: lastCheckpoint,
+        checkpoint: lastPulledCheckpoint,
         documents: [],
       }
     } else {
@@ -276,7 +277,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   private watchPostgresChanges() {
     this.realtimeChannel = this.options.supabaseClient
       .channel(`rxdb-supabase-${this.replicationIdentifier}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: this.table }, (payload) => {
+      .on("postgres_changes", { event: "*", schema: "public", table: this.table }, (payload: { eventType: string; new: any }) => {
         if (payload.eventType === "DELETE" || !payload.new) return // Should have set _deleted field already
         //console.debug('Realtime event received:', payload)
         this.realtimeChanges.next({
@@ -300,8 +301,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
 
   private rowToRxDoc(row: any): WithDeleted<RxDocType> {
     // TODO: Don't delete the field if it is actually part of the collection
-    // TA: i need this field, so keep it
-    //delete row[this.lastModifiedFieldName]
+    delete row[this.lastModifiedFieldName]
     return row as WithDeleted<RxDocType>
   }
 

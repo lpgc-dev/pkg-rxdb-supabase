@@ -1,6 +1,6 @@
 {
   "name": "rxdb-supabase",
-  "version": "1.0.7-ta",
+  "version": "1.0.4",
   "description": "Offline support for Supabase using RxDB, an offline-first database",
   "keywords": [
     "rxdb",
@@ -23,12 +23,12 @@
   "types": "./build/src/supabase-replication.d.ts",
   "license": "MIT",
   "engines": {
-    "node": "^18.15.0",
-    "npm": "^9.5.0"
+    "node": "^22.14.0",
+    "npm": "^10.5.0"
   },
   "volta": {
-    "node": "18.15.0",
-    "npm": "9.5.0"
+    "node": "22.14.0",
+    "npm": "10.5.0"
   },
   "publishConfig": {
     "access": "public"
@@ -54,12 +54,12 @@
     "semantic-release": "semantic-release"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.32.0",
-    "rxdb": "^15.3.0",
-    "rxjs": "^7.8.1"
+    "@supabase/supabase-js": "^2.49.4",
+    "rxdb": "^16.12.0",
+    "rxjs": "^7.8.2"
   },
   "devDependencies": {
-    "@supabase/postgrest-js": "^1.8.0",
+    "@supabase/postgrest-js": "^1.19.4",
     "@types/node": "^20.5.0",
     "@types/prompts": "^2.4.4",
     "@typescript-eslint/eslint-plugin": "^6.4.0",
