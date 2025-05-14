@@ -238,7 +238,6 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   ): Promise<WithDeleted<RxDocType>[]> {
     if (rows.length != 1) throw new Error("Invalid batch size")
     const row = rows[0]
-    //console.debug("Pushing changes...", row.newDocumentState)
     return row.assumedMasterState
       ? this.handleUpdate(row)
       : this.handleInsertion(row.newDocumentState)
@@ -278,22 +277,21 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   private async defaultUpdateHandler(
     row: RxReplicationWriteToMasterRow<RxDocType>,
   ): Promise<boolean> {
+    const id = (row.assumedMasterState as any).id
+    if (!id) {
+      throw new Error("Document id not found in assumedMasterState")
+    }
     let query = this.options.supabaseClient
       .from(this.table)
-      .update(row.newDocumentState, { count: "exact" })
-    Object.entries(row.assumedMasterState!).forEach(([field, value]) => {
-      const type = typeof value
-      if (type === "string" || type === "number") {
-        query = query.eq(field, value)
-      } else if (type === "boolean" || value === null) {
-        query = query.is(field, value)
-      } else {
-        throw new Error(`replicateSupabase: Unsupported field of type ${type}`)
-      }
-    })
-    const { error, count } = await query
-    if (error) throw error
-    return count == 1
+      .update(row.newDocumentState)
+      .eq("id", id)
+    const { error } = await query
+    if (error) {
+      let _error = `PKG-RXDB-SUPABASE : Error updating row : ${JSON.stringify(error)}`
+      console.error(_error)
+      throw Error(_error)
+    }
+    return true
   }
 
   private watchPostgresChanges() {

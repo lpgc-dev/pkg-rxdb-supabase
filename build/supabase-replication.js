@@ -137,21 +137,18 @@ class SupabaseReplication extends RxReplicationState {
    * Updates the row only if all database fields match the expected state.
    */
   async defaultUpdateHandler(row) {
-    let query = this.options.supabaseClient.from(this.table).update(row.newDocumentState, { count: "exact" });
-    Object.entries(row.assumedMasterState).forEach(([field, value]) => {
-      const type = typeof value;
-      if (type === "string" || type === "number") {
-        query = query.eq(field, value);
-      } else if (type === "boolean" || value === null) {
-        query = query.is(field, value);
-      } else {
-        throw new Error(`replicateSupabase: Unsupported field of type ${type}`);
-      }
-    });
-    const { error, count } = await query;
-    if (error)
-      throw error;
-    return count == 1;
+    const id = row.assumedMasterState.id;
+    if (!id) {
+      throw new Error("Document id not found in assumedMasterState");
+    }
+    let query = this.options.supabaseClient.from(this.table).update(row.newDocumentState).eq("id", id);
+    const { error } = await query;
+    if (error) {
+      let _error = `PKG-RXDB-SUPABASE : Error updating row : ${JSON.stringify(error)}`;
+      console.error(_error);
+      throw Error(_error);
+    }
+    return true;
   }
   watchPostgresChanges() {
     this.realtimeChannel = this.options.supabaseClient.channel(`rxdb-supabase-${this.replicationIdentifier}`).on(
