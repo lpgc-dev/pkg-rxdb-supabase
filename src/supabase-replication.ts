@@ -65,6 +65,31 @@ export type SupabaseReplicationOptions<RxDocType> = {
      * @default '_modified'
      */
     lastModifiedField?: string
+
+    /**
+     * Additional options for the fetchData query builder
+     */
+    fetchOptions?: {
+      /**
+       * Whether to include deleted records in the pull
+       * @default false
+       */
+      fetchDeleted?: boolean
+
+      /**
+       * Search text to filter records
+       */
+      searchText?: string | null
+
+      /**
+       * Additional query parameters for filtering
+       */
+      queryParams?: Array<{
+        field: string
+        value: any
+        opType?: string
+      }>
+    }
   }
 
   /**
@@ -191,7 +216,66 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
     batchSize: number,
   ): Promise<ReplicationPullHandlerResult<RxDocType, SupabaseReplicationCheckpoint>> {
     try {
-      let query = this.options.supabaseClient.from(this.table).select("*") // Added '*' to select all columns
+      const fetchOptions = this.options.pull?.fetchOptions || {}
+      let query = this.options.supabaseClient.from(this.table).select("*")
+
+      // Apply filter for deleted items if not fetching deleted
+      if (!fetchOptions.fetchDeleted) {
+        query = query.eq("is_deleted", false)
+      }
+
+      // Apply search text if provided
+      if (fetchOptions.searchText) {
+        const searchText = fetchOptions.searchText
+        const searchFilters = this.getCurrentCollectionColumnNames()
+          .map((col) => `${col}.ilike.%${searchText}%`)
+          .join(",")
+        query = query.or(searchFilters)
+      }
+
+      // Apply additional query parameters
+      if (fetchOptions.queryParams?.length) {
+        fetchOptions.queryParams.forEach(({ field, value, opType }) => {
+          if (value === undefined || value === null) return
+
+          switch (opType) {
+            case "is":
+              query = query.is(field, value)
+              break
+            case "cs":
+              query = query.contains(field, `{"${value}"}`)
+              break
+            case "json_cs":
+              query = query.contains(field, value)
+              break
+            case "or":
+              if (Array.isArray(value)) {
+                query = query.in(field, value)
+              } else {
+                query = query.eq(field, value)
+              }
+              break
+            case "not_eq":
+              query = query.neq(field, value)
+              break
+            case "between":
+              if (value && value.from && value.to) {
+                query = query.gte(field, value.from).lte(field, value.to)
+              }
+              break
+            case "gt":
+              query = query.gt(field, value)
+              break
+            case "lt":
+              query = query.lt(field, value)
+              break
+            default:
+              query = query.eq(field, value)
+          }
+        })
+      }
+
+      console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query)
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         // Construct the PostgREST query for the following condition:
         // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
@@ -199,6 +283,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
         const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
         const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`
         const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`
+        // This has tiebreaking by primary key if last modified is same, but that will not usually work for us as we use UUIDs
         query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)

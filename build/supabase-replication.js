@@ -64,7 +64,57 @@ class SupabaseReplication extends RxReplicationState {
    */
   async pullHandler(lastPulledCheckpoint, batchSize) {
     try {
+      const fetchOptions = this.options.pull?.fetchOptions || {};
       let query = this.options.supabaseClient.from(this.table).select("*");
+      if (!fetchOptions.fetchDeleted) {
+        query = query.eq("is_deleted", false);
+      }
+      if (fetchOptions.searchText) {
+        const searchText = fetchOptions.searchText;
+        const searchFilters = this.getCurrentCollectionColumnNames().map((col) => `${col}.ilike.%${searchText}%`).join(",");
+        query = query.or(searchFilters);
+      }
+      if (fetchOptions.queryParams?.length) {
+        fetchOptions.queryParams.forEach(({ field, value, opType }) => {
+          if (value === void 0 || value === null)
+            return;
+          switch (opType) {
+            case "is":
+              query = query.is(field, value);
+              break;
+            case "cs":
+              query = query.contains(field, `{"${value}"}`);
+              break;
+            case "json_cs":
+              query = query.contains(field, value);
+              break;
+            case "or":
+              if (Array.isArray(value)) {
+                query = query.in(field, value);
+              } else {
+                query = query.eq(field, value);
+              }
+              break;
+            case "not_eq":
+              query = query.neq(field, value);
+              break;
+            case "between":
+              if (value && value.from && value.to) {
+                query = query.gte(field, value.from).lte(field, value.to);
+              }
+              break;
+            case "gt":
+              query = query.gt(field, value);
+              break;
+            case "lt":
+              query = query.lt(field, value);
+              break;
+            default:
+              query = query.eq(field, value);
+          }
+        });
+      }
+      console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query);
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         const lastModified = JSON.stringify(lastPulledCheckpoint.modified);
         const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue);
