@@ -77,11 +77,6 @@ export type SupabaseReplicationOptions<RxDocType> = {
       fetchDeleted?: boolean
 
       /**
-       * Search text to filter records
-       */
-      searchText?: string | null
-
-      /**
        * Additional query parameters for filtering
        */
       queryParams?: Array<{
@@ -224,15 +219,6 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
         query = query.eq("is_deleted", false)
       }
 
-      // Apply search text if provided
-      if (fetchOptions.searchText) {
-        const searchText = fetchOptions.searchText
-        const searchFilters = this.getCurrentCollectionColumnNames()
-          .map((col) => `${col}.ilike.%${searchText}%`)
-          .join(",")
-        query = query.or(searchFilters)
-      }
-
       // Apply additional query parameters
       if (fetchOptions.queryParams?.length) {
         fetchOptions.queryParams.forEach(({ field, value, opType }) => {
@@ -321,6 +307,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
   private async pushHandler(
     rows: RxReplicationWriteToMasterRow<RxDocType>[],
   ): Promise<WithDeleted<RxDocType>[]> {
+    // TODO: check if user is online, if not do not push
     if (rows.length != 1) throw new Error("Invalid batch size")
     const row = rows[0]
     return row.assumedMasterState

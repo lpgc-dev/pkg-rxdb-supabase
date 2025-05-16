@@ -69,11 +69,6 @@ class SupabaseReplication extends RxReplicationState {
       if (!fetchOptions.fetchDeleted) {
         query = query.eq("is_deleted", false);
       }
-      if (fetchOptions.searchText) {
-        const searchText = fetchOptions.searchText;
-        const searchFilters = this.getCurrentCollectionColumnNames().map((col) => `${col}.ilike.%${searchText}%`).join(",");
-        query = query.or(searchFilters);
-      }
       if (fetchOptions.queryParams?.length) {
         fetchOptions.queryParams.forEach(({ field, value, opType }) => {
           if (value === void 0 || value === null)
