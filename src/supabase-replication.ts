@@ -22,6 +22,7 @@ import { Subject } from "rxjs"
 const DEFAULT_LAST_MODIFIED_FIELD = "_modified"
 const DEFAULT_DELETED_FIELD = "_deleted"
 const POSTGRES_DUPLICATE_KEY_ERROR_CODE = "23505"
+const DEFAULT_BATCH_SIZE = 1000
 
 export type SupabaseReplicationOptions<RxDocType> = {
   /**
@@ -65,6 +66,12 @@ export type SupabaseReplicationOptions<RxDocType> = {
      * @default '_modified'
      */
     lastModifiedField?: string
+
+    /**
+     * Amount of documents to fetch from Supabase in one request.
+     * @default 1000
+     */
+        batchSize?: number
 
     /**
      * Additional options for the fetchData query builder
@@ -151,6 +158,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
       options.deletedField || DEFAULT_DELETED_FIELD,
       options.pull && {
         ...options.pull,
+        batchSize: options.pull.batchSize || DEFAULT_BATCH_SIZE,
         stream$: realtimeChanges,
         handler: (
           lastPulledCheckpoint: SupabaseReplicationCheckpoint | undefined,
