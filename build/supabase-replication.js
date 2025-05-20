@@ -13,7 +13,10 @@ class SupabaseReplication extends RxReplicationState {
       options.pull && {
         ...options.pull,
         stream$: realtimeChanges,
-        handler: (lastCheckpoint, batchSize) => this.pullHandler(lastCheckpoint, batchSize)
+        handler: (lastPulledCheckpoint, batchSize) => this.pullHandler(
+          lastPulledCheckpoint || { modified: "", primaryKeyValue: "" },
+          batchSize
+        )
       },
       options.push && {
         ...options.push,
@@ -40,7 +43,7 @@ class SupabaseReplication extends RxReplicationState {
   realtimeChanges;
   realtimeChannel;
   async start() {
-    if (this.live && this.options.pull && (this.options.pull.realtimePostgresChanges || typeof this.options.pull.realtimePostgresChanges === "undefined")) {
+    if (this.live && this.options.pull && (this.options.pull?.realtimePostgresChanges || typeof this.options.pull.realtimePostgresChanges === "undefined")) {
       this.watchPostgresChanges();
     }
     return super.start();
@@ -51,32 +54,96 @@ class SupabaseReplication extends RxReplicationState {
     }
     return super.cancel();
   }
+  getCurrentCollectionColumnNames() {
+    return Object.keys(this.collection.internalStorageInstance.schema.properties).filter(
+      (name) => !name.startsWith("_")
+    );
+  }
   /**
    * Pulls all changes since the last checkpoint from supabase.
    */
-  async pullHandler(lastCheckpoint, batchSize) {
-    let query = this.options.supabaseClient.from(this.table).select();
-    if (lastCheckpoint && lastCheckpoint.modified) {
-      const lastModified = JSON.stringify(lastCheckpoint.modified);
-      const lastPrimaryKey = JSON.stringify(lastCheckpoint.primaryKeyValue);
-      const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`;
-      const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`;
-      query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`);
-    }
-    query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize);
-    const { data, error } = await query;
-    if (error)
+  async pullHandler(lastPulledCheckpoint, batchSize) {
+    try {
+      const fetchOptions = this.options.pull?.fetchOptions || {};
+      let query = this.options.supabaseClient.from(this.table).select("*");
+      if (!fetchOptions.fetchDeleted) {
+        query = query.eq("is_deleted", false);
+      }
+      if (fetchOptions.queryParams?.length) {
+        fetchOptions.queryParams.forEach(({ field, value, opType }) => {
+          if (value === void 0 || value === null)
+            return;
+          switch (opType) {
+            case "is":
+              query = query.is(field, value);
+              break;
+            case "cs":
+              query = query.contains(field, `{"${value}"}`);
+              break;
+            case "json_cs":
+              query = query.contains(field, value);
+              break;
+            case "or":
+              if (Array.isArray(value)) {
+                query = query.in(field, value);
+              } else {
+                query = query.eq(field, value);
+              }
+              break;
+            case "not_eq":
+              query = query.neq(field, value);
+              break;
+            case "between":
+              if (value && value.from && value.to) {
+                query = query.gte(field, value.from).lte(field, value.to);
+              }
+              break;
+            case "gt":
+              query = query.gt(field, value);
+              break;
+            case "lt":
+              query = query.lt(field, value);
+              break;
+            default:
+              query = query.eq(field, value);
+          }
+        });
+      }
+      console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query);
+      if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
+        const lastModified = JSON.stringify(lastPulledCheckpoint.modified);
+        const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue);
+        const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`;
+        const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`;
+        query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`);
+      }
+      query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize);
+      console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames());
+      console.debug(
+        "PKG-RXDB-SUPABASE : Pulling changes since",
+        lastPulledCheckpoint?.modified,
+        "with query",
+        query["url"].toString()
+      );
+      const { data, error } = await query;
+      if (error)
+        throw error;
+      if (!data || data.length === 0) {
+        return {
+          checkpoint: lastPulledCheckpoint,
+          documents: []
+        };
+      } else {
+        const documents = data.map(this.rowToRxDoc.bind(this));
+        const checkpoint = this.rowToCheckpoint(data[data.length - 1]);
+        return {
+          checkpoint,
+          documents
+        };
+      }
+    } catch (error) {
+      console.error("PKG-RXDB-SUPABASE : pullHandler error", error);
       throw error;
-    if (data.length == 0) {
-      return {
-        checkpoint: lastCheckpoint,
-        documents: []
-      };
-    } else {
-      return {
-        checkpoint: this.rowToCheckpoint(data[data.length - 1]),
-        documents: data.map(this.rowToRxDoc.bind(this))
-      };
     }
   }
   /**
@@ -115,31 +182,32 @@ class SupabaseReplication extends RxReplicationState {
    * Updates the row only if all database fields match the expected state.
    */
   async defaultUpdateHandler(row) {
-    let query = this.options.supabaseClient.from(this.table).update(row.newDocumentState, { count: "exact" });
-    Object.entries(row.assumedMasterState).forEach(([field, value]) => {
-      const type = typeof value;
-      if (type === "string" || type === "number") {
-        query = query.eq(field, value);
-      } else if (type === "boolean" || value === null) {
-        query = query.is(field, value);
-      } else {
-        throw new Error(`replicateSupabase: Unsupported field of type ${type}`);
-      }
-    });
-    const { error, count } = await query;
-    if (error)
-      throw error;
-    return count == 1;
+    const id = row.assumedMasterState.id;
+    if (!id) {
+      throw new Error("Document id not found in assumedMasterState");
+    }
+    let query = this.options.supabaseClient.from(this.table).update(row.newDocumentState).eq("id", id);
+    const { error } = await query;
+    if (error) {
+      let _error = `PKG-RXDB-SUPABASE : Error updating row : ${JSON.stringify(error)}`;
+      console.error(_error);
+      throw Error(_error);
+    }
+    return true;
   }
   watchPostgresChanges() {
-    this.realtimeChannel = this.options.supabaseClient.channel(`rxdb-supabase-${this.replicationIdentifier}`).on("postgres_changes", { event: "*", schema: "public", table: this.table }, (payload) => {
-      if (payload.eventType === "DELETE" || !payload.new)
-        return;
-      this.realtimeChanges.next({
-        checkpoint: this.rowToCheckpoint(payload.new),
-        documents: [this.rowToRxDoc(payload.new)]
-      });
-    }).subscribe();
+    this.realtimeChannel = this.options.supabaseClient.channel(`rxdb-supabase-${this.replicationIdentifier}`).on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: this.table },
+      (payload) => {
+        if (payload.eventType === "DELETE" || !payload.new)
+          return;
+        this.realtimeChanges.next({
+          checkpoint: this.rowToCheckpoint(payload.new),
+          documents: [this.rowToRxDoc(payload.new)]
+        });
+      }
+    ).subscribe();
   }
   async fetchByPrimaryKey(primaryKeyValue) {
     const { data, error } = await this.options.supabaseClient.from(this.table).select().eq(this.primaryKey, primaryKeyValue).limit(1);
@@ -150,6 +218,17 @@ class SupabaseReplication extends RxReplicationState {
     return this.rowToRxDoc(data[0]);
   }
   rowToRxDoc(row) {
+    const _columns = this.getCurrentCollectionColumnNames();
+    if (!_columns.includes(this.lastModifiedFieldName)) {
+      throw new Error(
+        `lastModifiedField : '${this.lastModifiedFieldName}' not found in collection schema`
+      );
+    }
+    Object.keys(row).forEach((key) => {
+      if (!_columns.includes(key)) {
+        delete row[key];
+      }
+    });
     return row;
   }
   rowToCheckpoint(row) {
