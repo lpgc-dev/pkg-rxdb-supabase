@@ -3,6 +3,7 @@ import { Subject } from "rxjs";
 const DEFAULT_LAST_MODIFIED_FIELD = "_modified";
 const DEFAULT_DELETED_FIELD = "_deleted";
 const POSTGRES_DUPLICATE_KEY_ERROR_CODE = "23505";
+const DEFAULT_BATCH_SIZE = 1e3;
 class SupabaseReplication extends RxReplicationState {
   constructor(options) {
     const realtimeChanges = new Subject();
@@ -12,6 +13,7 @@ class SupabaseReplication extends RxReplicationState {
       options.deletedField || DEFAULT_DELETED_FIELD,
       options.pull && {
         ...options.pull,
+        batchSize: options.pull.batchSize || DEFAULT_BATCH_SIZE,
         stream$: realtimeChanges,
         handler: (lastPulledCheckpoint, batchSize) => this.pullHandler(
           lastPulledCheckpoint || { modified: "", primaryKeyValue: "" },
@@ -109,7 +111,6 @@ class SupabaseReplication extends RxReplicationState {
           }
         });
       }
-      console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query);
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         const lastModified = JSON.stringify(lastPulledCheckpoint.modified);
         const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue);
@@ -118,13 +119,6 @@ class SupabaseReplication extends RxReplicationState {
         query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`);
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize);
-      console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames());
-      console.debug(
-        "PKG-RXDB-SUPABASE : Pulling changes since",
-        lastPulledCheckpoint?.modified,
-        "with query",
-        query["url"].toString()
-      );
       const { data, error } = await query;
       if (error)
         throw error;
