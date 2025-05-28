@@ -71,7 +71,7 @@ export type SupabaseReplicationOptions<RxDocType> = {
      * Amount of documents to fetch from Supabase in one request.
      * @default 1000
      */
-        batchSize?: number
+    batchSize?: number
 
     /**
      * Additional options for the fetchData query builder
@@ -269,7 +269,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
         })
       }
 
-      console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query)
+      // console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query)
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         // Construct the PostgREST query for the following condition:
         // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
@@ -281,13 +281,13 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
         query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)
-      console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames())
-      console.debug(
-        "PKG-RXDB-SUPABASE : Pulling changes since",
-        lastPulledCheckpoint?.modified,
-        "with query",
-        (query as any)["url"].toString(),
-      )
+      // console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames())
+      // console.debug(
+      //   "PKG-RXDB-SUPABASE : Pulling changes since",
+      //   lastPulledCheckpoint?.modified,
+      //   "with query",
+      //   (query as any)["url"].toString(),
+      // )
       const { data, error } = await query
       if (error) throw error
       if (!data || data.length === 0) {
