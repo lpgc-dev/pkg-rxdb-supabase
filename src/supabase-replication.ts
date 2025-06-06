@@ -272,17 +272,16 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
       // console.log("PKG-RXDB-SUPABASE QUERY after fetchData:", query)
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         // Construct the PostgREST query for the following condition:
-        // WHERE _modified > lastModified OR (_modified = lastModified AND primaryKey > lastPrimaryKey)
         const lastModified = JSON.stringify(lastPulledCheckpoint.modified)
-        const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue) // TODO: Add test for a integer primary key
         const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`
-        const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`
         // This has tiebreaking by primary key if last modified is same, but that will not usually work for us as we use UUIDs
-        query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`)
+        // WHERE _modified > lastModified
+        query = query.or(`${isNewer}`)
+        // query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.neq.${lastPrimaryKey})`)
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize)
       // console.log("PKG-RXDB-SUPABASE PROPERTIES :", this.getCurrentCollectionColumnNames())
-      // console.debug(
+      // console.log(
       //   "PKG-RXDB-SUPABASE : Pulling changes since",
       //   lastPulledCheckpoint?.modified,
       //   "with query",

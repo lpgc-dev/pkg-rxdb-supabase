@@ -113,10 +113,8 @@ class SupabaseReplication extends RxReplicationState {
       }
       if (lastPulledCheckpoint && lastPulledCheckpoint.modified) {
         const lastModified = JSON.stringify(lastPulledCheckpoint.modified);
-        const lastPrimaryKey = JSON.stringify(lastPulledCheckpoint.primaryKeyValue);
         const isNewer = `${this.lastModifiedFieldName}.gt.${lastModified}`;
-        const isSameAge = `${this.lastModifiedFieldName}.eq.${lastModified}`;
-        query = query.or(`${isNewer},and(${isSameAge},${this.primaryKey}.gt.${lastPrimaryKey})`);
+        query = query.or(`${isNewer}`);
       }
       query = query.order(this.lastModifiedFieldName).order(this.primaryKey).limit(batchSize);
       const { data, error } = await query;
