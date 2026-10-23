@@ -36,6 +36,11 @@ export type SupabaseReplicationOptions<RxDocType> = {
          */
         lastModifiedField?: string;
         /**
+         * Amount of documents to fetch from Supabase in one request.
+         * @default 1000
+         */
+        batchSize?: number;
+        /**
          * Additional options for the fetchData query builder
          */
         fetchOptions?: {
@@ -44,10 +49,6 @@ export type SupabaseReplicationOptions<RxDocType> = {
              * @default false
              */
             fetchDeleted?: boolean;
-            /**
-             * Search text to filter records
-             */
-            searchText?: string | null;
             /**
              * Additional query parameters for filtering
              */
