@@ -177,6 +177,7 @@ export class SupabaseReplication<RxDocType> extends RxReplicationState<
       typeof options.live === "undefined" ? true : options.live,
       typeof options.retryTime === "undefined" ? 5000 : options.retryTime,
       typeof options.autoStart === "undefined" ? true : options.autoStart,
+      typeof options.toggleOnDocumentVisible === "undefined" ? false : options.toggleOnDocumentVisible
     )
     this.realtimeChanges = realtimeChanges
     this.table = options.table || options.collection.name
