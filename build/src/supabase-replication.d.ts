@@ -35,6 +35,29 @@ export type SupabaseReplicationOptions<RxDocType> = {
          * @default '_modified'
          */
         lastModifiedField?: string;
+        /**
+         * Amount of documents to fetch from Supabase in one request.
+         * @default 1000
+         */
+        batchSize?: number;
+        /**
+         * Additional options for the fetchData query builder
+         */
+        fetchOptions?: {
+            /**
+             * Whether to include deleted records in the pull
+             * @default false
+             */
+            fetchDeleted?: boolean;
+            /**
+             * Additional query parameters for filtering
+             */
+            queryParams?: Array<{
+                field: string;
+                value: any;
+                opType?: string;
+            }>;
+        };
     };
     /**
      * Options for pushing data to supabase. Set to {} to push with the default
@@ -79,6 +102,7 @@ export declare class SupabaseReplication<RxDocType> extends RxReplicationState<R
     constructor(options: SupabaseReplicationOptions<RxDocType>);
     start(): Promise<void>;
     cancel(): Promise<any>;
+    private getCurrentCollectionColumnNames;
     /**
      * Pulls all changes since the last checkpoint from supabase.
      */

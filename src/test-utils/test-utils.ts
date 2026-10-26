@@ -1,4 +1,4 @@
-import { RxConflictHandler, RxConflictHandlerInput, RxError } from "rxdb"
+import { RxConflictHandler, RxError, deepEqual } from "rxdb"
 import { RxReplicationState } from "rxdb/plugins/replication"
 import { SupabaseReplication, SupabaseReplicationCheckpoint } from "../supabase-replication.js"
 import { Human, HumanRow } from "./test-types.js"
@@ -40,10 +40,12 @@ export async function withReplication(
  * A simple conflict handler for tests
  */
 export function resolveConflictWithName<T>(name: string): RxConflictHandler<T> {
-  return async (input: RxConflictHandlerInput<T>) => {
-    return {
-      isEqual: false,
-      documentData: { ...input.newDocumentState, name },
-    }
+  return {
+    isEqual(a, b) {
+      return deepEqual(a, b)
+    },
+    resolve: async (input) => {
+      return { ...input.newDocumentState, name }
+    },
   }
 }

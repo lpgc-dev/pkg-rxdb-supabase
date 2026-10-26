@@ -14,7 +14,7 @@ type RequestCheck = (input: URL | RequestInfo, options?: RequestInit | undefined
 interface ExpectedFetch {
   name: string
   requestCheck: RequestCheck
-  response: Promise<Response>
+  response: () => Promise<Response>
 }
 
 /**
@@ -55,7 +55,7 @@ export class SupabaseBackendMock {
         this.expectedFetches.push({
           name,
           requestCheck,
-          response: Promise.resolve(response),
+          response: () => Promise.resolve(response),
         })
       },
       thenReturnError: (errorCode: string, httpCode = 409, message = "Test error message") => {
@@ -66,14 +66,14 @@ export class SupabaseBackendMock {
         this.expectedFetches.push({
           name,
           requestCheck,
-          response: Promise.resolve(response),
+          response: () => Promise.resolve(response),
         })
       },
       thenFail: (error: any = {}) => {
         this.expectedFetches.push({
           name,
           requestCheck,
-          response: Promise.reject(error),
+          response: () => Promise.reject(error),
         })
       },
     }
@@ -117,10 +117,21 @@ export class SupabaseBackendMock {
       this.expectedFetches,
       `Did not expect any requests. Got ${options?.method} ${input}`,
     ).not.toHaveLength(0)
-    const expected = this.expectedFetches[0]
-    this.expectedFetches = this.expectedFetches.slice(1)
+    // RxDB may run push and pull concurrently, so match the first expected request that fits
+    // rather than enforcing strict ordering. Falls back to the first expectation to report a mismatch.
+    let index = this.expectedFetches.findIndex((exp) => {
+      try {
+        exp.requestCheck(input, options)
+        return true
+      } catch {
+        return false
+      }
+    })
+    if (index === -1) index = 0
+    const expected = this.expectedFetches[index]
+    this.expectedFetches = this.expectedFetches.filter((_, i) => i !== index)
     expected.requestCheck(input, options)
-    return expected.response
+    return expected.response()
   }
 
   expectRealtimeSubscription<T extends Record<string, any>>(

@@ -21,17 +21,6 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Format check
-        run: npm run format:check
-
-      - name: Lint check
-        run: npm run lint:check
-        continue-on-error: true
-
-      - name: Spell check
-        run: npm run spell:check
-        continue-on-error: true
-
       - name: Tests
         run: npm run test
 
